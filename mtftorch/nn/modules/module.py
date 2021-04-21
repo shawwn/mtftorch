@@ -2,6 +2,7 @@ from collections import OrderedDict, namedtuple
 import itertools
 import warnings
 import functools
+from contextlib import contextmanager, ExitStack
 
 import mtftorch
 from ..parameter import Parameter
@@ -12,6 +13,8 @@ from typing import Union, Tuple, Any, Callable, Iterator, Set, Optional, overloa
 from ...utils.hooks import RemovableHandle
 
 from mesh_tensorflow import Tensor
+
+from mtftorch import tf as _tf
 
 
 _grad_t = Union[Tuple[Tensor, ...], Tensor]
@@ -204,7 +207,58 @@ def _forward_unimplemented(self, *input: Any) -> None:
     raise NotImplementedError
 
 
-class Module:
+class ScopedModule:
+    def __init__(self, scope=None, index=None, index_prefix='_', index_bias=0):
+        self._variable_scope = None
+        self._scope = scope
+        self._index = index
+        self._index_prefix = index_prefix
+        self._index_bias = index_bias
+        self._input = None
+        self._output = None
+
+    def get_scope_name(self):
+        if self._variable_scope is None:
+            raise ValueError("Call self.scope() before trying to call self.get_scope_name()")
+        return self._variable_scope.name
+
+    def build_scope_name(self, name=None, index=None, postfix=None, prefix=None):
+      if name is None:
+        if self._scope is None:
+          name = type(self).__name__
+        else:
+          name = self._scope
+      if index is None:
+        index = self._index
+      if index is not None:
+        if index != 0:
+          name = name + self._index_prefix + str(index+self._index_bias)
+      if postfix is not None:
+        name = name + postfix
+      if prefix is not None:
+        name = prefix + name
+      return name
+
+    @contextmanager
+    def scope(self):
+        with ExitStack() as stack:
+            name = self.build_scope_name()
+            if self._variable_scope is not None:
+                # reenter scope
+                stack.enter_context(_tf.variable_scope(self._variable_scope, auxiliary_name_scope=False))
+            else:
+                # create new scope and enter it, reusing variables with identical names
+                stack.enter_context(_tf.variable_scope(name, reuse=_tf.AUTO_REUSE))
+                self._variable_scope = _tf.get_variable_scope()
+            stack.enter_context(_tf.name_scope(name))
+            scope_name = self.get_scope_name()
+            ind = '  ' * scope_name.count('/')
+            print(ind + 'BEGIN_SCOPE', scope_name.replace('/', '.'))
+            yield
+            print(ind + 'END_SCOPE', scope_name.replace('/', '.'))
+
+
+class Module(ScopedModule):
     r"""Base class for all neural network modules.
 
     Your models should also subclass this class.
@@ -250,10 +304,11 @@ class Module:
     training: bool
     _is_full_backward_hook: Optional[bool]
 
-    def __init__(self):
+    def __init__(self, scope=None, index=None, index_prefix='_', index_bias=0):
         """
         Initializes internal Module state, shared by both nn.Module and ScriptModule.
         """
+        super().__init__(scope=scope, index=index, index_prefix=index_prefix, index_bias=index_bias)
         mtftorch._C._log_api_usage_once("python.nn_module")
 
         self.training = True

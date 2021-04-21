@@ -167,6 +167,7 @@ parser.add_argument('--save-xml', nargs='?', type=str,
 parser.add_argument('--discover-tests', action='store_true')
 parser.add_argument('--log-suffix', type=str, default="")
 parser.add_argument('--run-parallel', type=int, default=1)
+parser.add_argument('--debug', action='store_true', help='whether to trap errors in pdb')
 
 args, remaining = parser.parse_known_args()
 if args.jit_executor == 'legacy':
@@ -188,6 +189,7 @@ TEST_IN_SUBPROCESS = args.subprocess
 TEST_SAVE_XML = args.save_xml
 REPEAT_COUNT = args.repeat
 SEED = args.seed
+DEBUG = args.debug
 if not expecttest.ACCEPT:
     expecttest.ACCEPT = args.accept
 UNITTEST_ARGS = [sys.argv[0]] + remaining
@@ -262,7 +264,33 @@ def sanitize_test_filename(filename):
     strip_py = re.sub(r'.py$', '', filename)
     return re.sub('/', r'.', strip_py)
 
+# https://stackoverflow.com/questions/4398967/python-unit-testing-automatically-running-the-debugger-when-a-test-fails
+import pdb
+import traceback
+
+def debugTestRunner(post_mortem=None):
+    """unittest runner doing post mortem debugging on failing tests"""
+    if post_mortem is None:
+        post_mortem = pdb.post_mortem
+    class DebugTestResult(unittest.TextTestResult):
+        def addError(self, test, err):
+            # called before tearDown()
+            traceback.print_exception(*err)
+            post_mortem(err[2])
+            super(DebugTestResult, self).addError(test, err)
+        def addFailure(self, test, err):
+            traceback.print_exception(*err)
+            post_mortem(err[2])
+            super(DebugTestResult, self).addFailure(test, err)
+    return unittest.TextTestRunner(resultclass=DebugTestResult)
+
+def tensorflow_startup():
+    torch.tf.compat.v1.disable_v2_behavior()
+    torch.tf.compat.v1.enable_resource_variables()
+    torch.tf.get_logger().setLevel('DEBUG')
+
 def run_tests(argv=UNITTEST_ARGS):
+    tensorflow_startup()
     if TEST_DISCOVER:
         suite = unittest.TestLoader().loadTestsFromModule(__main__)
         test_cases = discover_test_cases_recursively(suite)
@@ -307,6 +335,8 @@ def run_tests(argv=UNITTEST_ARGS):
         for _ in range(REPEAT_COUNT):
             if not unittest.main(exit=False, argv=argv).result.wasSuccessful():
                 sys.exit(-1)
+    elif DEBUG:
+        unittest.main(argv=argv, testRunner=debugTestRunner())
     else:
         unittest.main(argv=argv)
 
