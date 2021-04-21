@@ -30,6 +30,7 @@ except ImportError:
 
 TESTS = [
     'test_basic',
+    'test_module',
     # 'test_public_bindings',
     # 'test_type_hints',
     # 'test_autograd',
