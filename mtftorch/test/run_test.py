@@ -26,6 +26,7 @@ try:
 except ImportError:
     print("Unable to import s3_stat_parser from tools. Running without S3 stats...")
     HAVE_BOTO3 = False
+    Report = None
 
 
 TESTS = [
