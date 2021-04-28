@@ -224,6 +224,8 @@ def as_shape(x) -> mtf.Shape:
 def as_dims(x) -> List[mtf.Dimension]:
     if is_numpy(x):
         return [mtf.Dimension(name=None, size=v) for v in x.shape]
+    if is_tf_tensor(x):
+        return [mtf.Dimension(name=None, size=v) for v in x.shape.as_list()]
     if hasattr(x, 'shape'):
         x = x.shape
     if isinstance(x, mtf.Shape):
@@ -321,13 +323,16 @@ def as_numpy(x):
 def is_numpy(x):
     return isinstance(x, np.ndarray)
 
+def is_tf_tensor(x):
+    return isinstance(x, tf.Tensor)
+
 def shapelist(x, *dims) -> mtf.Shape:
     old_dims = as_dims(x)
     if len(dims) <= 0:
         return size(old_dims)
     dims = [old_dims[x] if isinstance(x, int) else x for x in dims]
     new_dims = as_dims(dims)
-    if is_numpy(x):
+    if is_numpy(x) or is_tf_tensor(x):
         if len(old_dims) != len(new_dims):
             raise ValueError(f"Dimension length mismatch: can't convert numpy shape {x.shape} to dimensions {new_dims}")
         dims = []
@@ -385,6 +390,9 @@ def ones(*dims, mesh=None, **kws) -> mtf.Tensor:
 
 def tensor(data, shape, *, dtype=None, mesh=None):
     mesh = get_mesh(mesh)
+    if isinstance(data, tf.Tensor):
+        shape = shapelist(data, shape)
+        return mtf.import_tf_tensor(mesh, data, shape=shape)
     data = as_numpy(data)
     #shape = size(shape)
     shape = shapelist(data, shape)

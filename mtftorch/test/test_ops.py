@@ -1,8 +1,7 @@
 from mtftorch.testing._internal.common_utils import TestCase, run_tests
 
 import mtftorch as mtorch
-from mtftorch import mtf
-from mtftorch import nn
+from mtftorch import mtf, tf, nn
 
 class TestModule(TestCase):
     def setUp(self):
@@ -87,6 +86,11 @@ class TestModule(TestCase):
         self.assertEqual(
             tile_ul_rgb[0],
             R[0])
+
+    def test_import_tf_tensor(self):
+        a = mtorch.tensor(tf.random.stateless_uniform([2, 2, 3], seed=(2, 3)), "H=2 W=2 C=3")
+        b = mtorch.tensor(tf.random.stateless_uniform([2, 2, 3], seed=(2, 3)), "H   W   C  ")
+        self.assertEqual(a, b)
 
 if __name__ == '__main__':
     run_tests()
