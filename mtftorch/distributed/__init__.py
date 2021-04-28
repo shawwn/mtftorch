@@ -1,5 +1,5 @@
 
-import torch
+import mtftorch as torch
 import sys
 import os
 from enum import Enum
