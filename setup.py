@@ -38,6 +38,7 @@ setuptools.setup(
         # 'moment>=0.0.10',
         # 'google-auth>=0.11.0',
         # 'google-api-python-client>=1.7.11',
+        'contextvars>=2.4',
         'mesh_tensorflow>=0.1.19',
     ],
     packages=packages,

@@ -16,7 +16,20 @@ else:
 
 from ._six import string_classes as _string_classes
 
+import mesh_tensorflow as mtf
+import mesh_tensorflow.ops
+import tensorflow as tf2
+tf = tf2.compat.v1
+
+from mesh_tensorflow.ops import Tensor
+from mesh_tensorflow.ops import Operation
+from mesh_tensorflow.ops import Shape
+from mesh_tensorflow.ops import Shape as Size
+from mesh_tensorflow.ops import VariableDType as dtype
+
 from mtftorch._C import *
+from mtftorch.autograd import *
+from mtftorch.autograd.grad_mode import *
 
 # TODO: Clean up this bootstrapping issue more elegantly. (mtftorch.types depends on mtftorch.device, which isn't
 #  defined yet.) For now, punt by force-reloading mtftorch.types, since mtftorch.device is now defined at this point.

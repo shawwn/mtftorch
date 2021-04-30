@@ -1,7 +1,8 @@
 from mtftorch.testing._internal.common_utils import TestCase, run_tests
 
 import mtftorch as mtorch
-from mtftorch import mtf, tf, nn
+from mtftorch import tf, nn
+
 
 class TestModule(TestCase):
     def setUp(self):
@@ -64,14 +65,23 @@ class TestModule(TestCase):
         image = image.squeeze("N")
         image = image.permute("H W C")
         tile_top, tile_bot = image.split("H", 2)
+        tile_top: mtorch.TensorType
+        tile_bot: mtorch.TensorType
         tile_00, tile_10 = tile_top.split("W", 2)
+        tile_00: mtorch.TensorType
+        tile_10: mtorch.TensorType
         tile_01, tile_11 = tile_bot.split("W", 2)
+        tile_01: mtorch.TensorType
+        tile_11: mtorch.TensorType
         tiles = [tile_00, tile_10, tile_01, tile_11]
         self.assertEqual(
             tiles[0].shape,
             mtorch.size("H=2 W=2 C=3"))
         rgbs = [x.unbind("C") for x in tiles]
         R, G, B = mtorch.mtf.transpose_list_of_lists(rgbs)
+        R: mtorch.List[mtorch.TensorType]
+        G: mtorch.List[mtorch.TensorType]
+        B: mtorch.List[mtorch.TensorType]
         self.assertEqual(
             R[0].shape,
             G[0].shape)
@@ -83,6 +93,7 @@ class TestModule(TestCase):
             tile_ul,
             tile_00)
         tile_ul_rgb = tile_ul.unbind("C")
+        # import pdb; pdb.set_trace()
         self.assertEqual(
             tile_ul_rgb[0],
             R[0])
@@ -91,6 +102,7 @@ class TestModule(TestCase):
         a = mtorch.tensor(tf.random.stateless_uniform([2, 2, 3], seed=(2, 3)), "H=2 W=2 C=3")
         b = mtorch.tensor(tf.random.stateless_uniform([2, 2, 3], seed=(2, 3)), "H   W   C  ")
         self.assertEqual(a, b)
+
 
 if __name__ == '__main__':
     run_tests()

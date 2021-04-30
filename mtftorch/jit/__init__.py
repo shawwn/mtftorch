@@ -1,5 +1,19 @@
 import mtftorch.nn
 
+# These are imported so users can access them from the `torch.jit` module
+from mtftorch._jit_internal import (
+    # Final,
+    # Future,
+    # _overload,
+    # _overload_method,
+    # ignore,
+    # _isinstance,
+    is_scripting,
+    # export,
+    # unused,
+)
+
+
 _enabled = False
 
 if _enabled:
