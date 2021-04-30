@@ -1,11 +1,9 @@
-import mtftorch
+import mtftorch as torch
 # from torch._C import _disabled_torch_function_impl
 from collections import OrderedDict
 
-import mesh_tensorflow as mtf
 
-
-class Parameter(mtf.Tensor):
+class Parameter(torch.Tensor):
     r"""A kind of Tensor that is to be considered a module parameter.
 
     Parameters are :class:`~torch.Tensor` subclasses, that have a
@@ -25,7 +23,16 @@ class Parameter(mtf.Tensor):
     def __new__(cls, data=None, requires_grad=True):
         if data is None:
             data = torch.tensor([])
-        return torch.Tensor._make_subclass(cls, data, requires_grad)
+        if not torch.is_tensor(data):
+            data = torch.zeros(data)
+        name = data.operation.name + '/value'
+        initializer = torch.mtf.tf.zeros_initializer()
+        storage = torch.mtf.get_variable(
+            torch.get_mesh(), name, shape=data.shape, dtype=data.dtype,
+            trainable=requires_grad, initializer=initializer)
+        storage = storage.operation.outputs[0]
+
+        return torch.Tensor._make_subclass(cls, storage, requires_grad)
 
     def __deepcopy__(self, memo):
         if id(self) in memo:

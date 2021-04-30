@@ -21,6 +21,15 @@ import mesh_tensorflow.ops
 import tensorflow as tf2
 tf = tf2.compat.v1
 
+def startup():
+    if not globals().get('tensorflow_startup__started', False):
+        globals()['tensorflow_startup__started'] = True
+        tf.disable_v2_behavior()
+        tf.enable_resource_variables()
+        tf2.get_logger().setLevel('DEBUG')
+
+startup()
+
 from mesh_tensorflow.ops import Tensor
 from mesh_tensorflow.ops import Operation
 from mesh_tensorflow.ops import Shape

@@ -22,6 +22,7 @@ import mesh_tensorflow.ops
 import tensorflow as tf2
 from tensorflow.python.framework import dtypes as _tf_dtypes
 
+import mesh_tensorflow.ops
 from mesh_tensorflow.ops import Tensor
 from mesh_tensorflow.ops import Operation
 from mesh_tensorflow.ops import Shape
@@ -99,84 +100,84 @@ def _get_tracing_state():
 import contextvars as cv
 
 
-import mesh_tensorflow.test_utils
+# import mesh_tensorflow.test_utils
 
 
-class Converter(mesh_tensorflow.test_utils.NumpyConverter):
+class ConverterBase(object):
+    pass
+
+
+class Converter(ConverterBase): # (mesh_tensorflow.test_utils.NumpyConverter):
     """Converter class to convert between mtf.Tensor, tf.Tensor and np.array."""
 
     def __init__(self, session=None):
         super().__init__()
+        if session is None:
+            session = tf.get_default_session()
         self._cached_session = session
 
-    def convert_np_array_to_mtf_tensor(self, x, dim_names=None, dtype=None):
-        """Convert a numpy array to an equivalent mtf.Tensor."""
-        dtype = get_dtype(dtype, x)
-        dim_sizes = x.shape
-        if not dim_names:
-            dim_names = [f"dim{i}" for i in range(len(dim_sizes))]
-
-        dims = []
-        for dim_size, dim_name in zip(dim_sizes, dim_names):
-            dims.append(mtf.Dimension(dim_name, dim_size))
-        shape = mtf.Shape(dims)
-        x_mtf = mtf.constant(self.mesh, x, shape=shape, dtype=dtype)
-        return x_mtf
-
-    def convert_to_np_array(self, x, *, session=None):
+    def convert_to_np_array(self, x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]):
         if is_tensor(x):
-            return self.convert_mtf_tensor_to_np_array(x, session=session)
+            return self.convert_mtf_tensor_to_np_array(x)
         if is_tf_tensor(x):
-            return self.convert_tf_tensor_to_np_array(x, session=session)
-        return x
+            return self.convert_tf_tensor_to_np_array(x)
+        return as_numpy(x)
 
-    def convert_to_tf_tensor(self, x, *, session=None):
+    def convert_to_tf_tensor(self, x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]):
         orig = x
-        if not is_tensor(x):
-            x = tensor(x)
-        if is_tensor(x):
-            _, x = self.convert_mtf_tensor_to_tf_tensor(x)
         if is_tf_tensor(x):
             return x
-        else:
-            raise ValueError(f"Couldn't convert {orig} to tf_tensor")
+        if not is_tensor(x):
+            return tf.constant(x)
+        if is_tensor(x):
+            return self.convert_mtf_tensor_to_tf_tensor(x)
+        raise ValueError(f"Couldn't convert {orig} to tf_tensor")
 
-    def convert_mtf_tensor_to_np_array(self, x_mtf, *, session=None):
+    def convert_mtf_tensor_to_np_array(self, tensor: Union[mtf.Tensor, TensorMixin]) -> np.ndarray:
         """Convert an mtf.Tensor to a numpy array."""
-        _, x_tf = self.convert_mtf_tensor_to_tf_tensor(x_mtf)
-        return self.convert_tf_tensor_to_np_array(x_tf, session=session)
+        assert is_tensor(tensor)
+        tensor = self.convert_mtf_tensor_to_tf_tensor(tensor)
+        tensor = self.convert_tf_tensor_to_np_array(tensor)
+        return tensor
 
-    def convert_tf_tensor_to_np_array(self, x_tf, *, session=None):
+    def convert_tf_tensor_to_np_array(self, tensor: tf.Tensor) -> np.ndarray:
+        assert is_tf_tensor(tensor)
         if tf.executing_eagerly():
-            return x_tf.numpy()
+            return tensor.numpy()
         else:
-            session = self.get_session(session)
+            session = self.get_session()
             # session.run(tf.global_variables_initializer())
-            return x_tf.eval(session=session)
+            return tensor.eval(session=session)
 
-    def convert_mtf_tensor_to_tf_tensor(self, mtf_tensor, lowering=None):
+    def convert_mtf_tensor_to_tf_tensor(self, tensor: Union[mtf.Tensor, TensorMixin]):
         """Convert an mtf.Tensor to a tf.Tensor."""
-        if lowering is None:
-            lowering = mtf.Lowering(self.graph, {self.mesh: self.mesh_impl})
-        return lowering, lowering.export_to_tf_tensor(mtf_tensor)
+        assert is_tensor(tensor)
+        # if is_tf_tensor(tensor):
+        #     return tensor
+        try:
+            return self.lowering.export_to_tf_tensor(tensor)
+        except KeyError:
+            state = get_state()
+            state.reset_lowering()
+            return self.lowering.export_to_tf_tensor(tensor)
 
     @property
-    def graph(self):
+    def graph(self) -> Union[mtf.Graph, GraphMixin]:
         return get_graph()
 
     @property
-    def mesh(self):
+    def mesh(self) -> mtf.Mesh:
         return get_mesh()
 
     @property
-    def mesh_impl(self):
+    def mesh_impl(self) -> mtf.MeshImpl:
         return get_mesh_impl()
 
     @property
-    def lowering(self):
+    def lowering(self) -> mtf.Lowering:
         return get_lowering()
 
-    def get_session(self, session=None):
+    def get_session(self, session=None) -> tf.Session:
         if session is None:
             session = tf.get_default_session()
         if session is None:
@@ -188,18 +189,28 @@ class Converter(mesh_tensorflow.test_utils.NumpyConverter):
 
 class State:
     def __init__(self, name="mtftorch_state", *,
-                 graph=None, mesh=None, mesh_impl=None, lowering=None):
-        self.graph = graph if graph is not None else mtf.Graph()
-        self.mesh = mesh if mesh is not None else mtf.Mesh(self.graph, name)
-        self.mesh_impl = mesh_impl if mesh_impl is not None else mtf.placement_mesh_impl.PlacementMeshImpl(
-            shape=[], layout={}, devices=[""])
-        self.lowering = lowering if lowering is not None else mtf.Lowering(self.graph, {self.mesh: self.mesh_impl})
-        self.converter = Converter()
+                 graph=None, mesh=None, mesh_impl=None, lowering=None, session=None):
+        if graph is None:
+            graph = mtf.Graph()
+        if mesh is None:
+            mesh = mtf.Mesh(graph, name)
+        if mesh_impl is None:
+            mesh_impl = mtf.placement_mesh_impl.PlacementMeshImpl(
+                shape=[], layout={}, devices=[""])
+        if lowering is None:
+            lowering = mtf.Lowering(graph, {mesh: mesh_impl}, autostack=False)
+        self.graph = graph
+        self.mesh = mesh
+        self.mesh_impl = mesh_impl
+        self.lowering = lowering
+        self.converter = Converter(session=session)
+
+    def reset_lowering(self):
+        self.lowering = mtf.Lowering(self.graph, {self.mesh: self.mesh_impl}, autostack=False)
 
 
-State.GLOBAL = State()
-State.current = cv.ContextVar('mtftorch.State.current', default=State.GLOBAL)
-State.requires_grad = cv.ContextVar('mtftorch.State.requires_grad', default=False)
+def get_state() -> State:
+    return State.current.get()
 
 
 def get(attr, *defaults):
@@ -207,7 +218,7 @@ def get(attr, *defaults):
     return getattr(state, attr, *defaults)
 
 
-def get_graph(graph=None) -> mtf.Graph:
+def get_graph(graph=None) -> Union[mtf.Graph, GraphMixin]:
     if graph is not None:
         return graph
     return get('graph')
@@ -237,6 +248,12 @@ def get_converter(converter=None) -> Converter:
     return get('converter')
 
 
+def get_session(session=None) -> tf.Session:
+    if session is not None:
+        return session
+    return get_converter().get_session(session)
+
+
 @contextmanager
 def _with_value(cvar, value):
     reset_value = cvar.set(value)
@@ -246,19 +263,19 @@ def _with_value(cvar, value):
         cvar.reset(reset_value)
 
 
-def with_state(state):
+def with_state(state: State):
     return _with_value(State.current, state)
 
 
-def _autograd_init():
+def _autograd_init() -> _bool:
     return True
 
 
-def is_grad_enabled():
+def is_grad_enabled() -> _bool:
     return State.requires_grad.get()
 
 
-def _set_grad_enabled(value):
+def _set_grad_enabled(value: _bool):
     token = State.requires_grad.set(value)
 
     def reset_grad_enabled():
@@ -276,8 +293,8 @@ def numpy(x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]) -> np.ndarra
     return get_converter().convert_to_np_array(x)
 
 
-def to_tf(x: Union[mtf.Tensor, TensorMixin], *, session=None) -> tf.Tensor:
-    return get_converter().convert_to_tf_tensor(x, session=session)
+def to_tf(x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]) -> tf.Tensor:
+    return get_converter().convert_to_tf_tensor(x)
 
 
 def item(x: Union[mtf.Tensor, TensorMixin]) -> np.ndarray:
@@ -292,9 +309,9 @@ def as_shape(x) -> Union[mtf.Shape, ShapeMixin]:
 
 def as_dims(x) -> List[mtf.Dimension]:
     if is_numpy(x):
-        return [mtf.Dimension(name=None, size=v) for v in x.shape]
+        return [mtf.Dimension(name=str(i), size=v) for i, v in enumerate(x.shape)]
     if is_tf_tensor(x):
-        return [mtf.Dimension(name=None, size=v) for v in x.shape.as_list()]
+        return [mtf.Dimension(name=str(i), size=v) for i, v in enumerate(x.shape.as_list())]
     if hasattr(x, 'shape'):
         x = x.shape
     if isinstance(x, mtf.Shape):
@@ -411,10 +428,14 @@ def is_numpy(x) -> _bool:
 def is_tf_tensor(x) -> _bool:
     return isinstance(x, tf.Tensor)
 
+
 def is_tensor(x) -> _bool:
     return isinstance(x, mtf.Tensor)
 
+
 def shapelist(x, *dims) -> Union[mtf.Shape, ShapeMixin]:
+    if len(dims) == 1 and dims[0] is None:
+        return size(x)
     old_dims = as_dims(x)
     if len(dims) <= 0:
         return size(old_dims)
@@ -482,6 +503,34 @@ def permute(x: Union[mtf.Tensor, TensorMixin], *dims) -> Union[mtf.Tensor, Tenso
     return mtf.transpose(x, new_shape)
 
 
+def dim_index(x, dim) -> int:
+    orig = dim
+    shape = size(x)
+    if hasattr(dim, 'name'):
+        dim = dim.name
+    if isinstance(dim, str):
+        dim = shape.get_dim_by_name(dim)
+        return shape.dims.index(dim)
+    if isinstance(dim, int):
+        return shape.dims.index(shape[dim])
+    raise ValueError(f"Can't get dim_index for {shape} {orig}")
+
+
+def transpose_shape(x: Union[mtf.Tensor, TensorMixin], dim0, dim1) -> Union[mtf.Shape, ShapeMixin]:
+    dim0 = dim_index(x, dim0)
+    dim1 = dim_index(x, dim1)
+    old_dims = as_dims(x)
+    new_dims = as_dims(x)
+    new_dims[dim1] = old_dims[dim0]
+    new_dims[dim0] = old_dims[dim1]
+    return size(new_dims)
+
+
+def transpose(x: Union[mtf.Tensor, TensorMixin], dim0, dim1) -> Union[mtf.Tensor, TensorMixin]:
+    new_shape = transpose_shape(x, dim0, dim1)
+    return permute(x, *new_shape)
+
+
 def zeros(*dims, dtype=None, requires_grad=False, mesh=None) -> Union[mtf.Tensor, TensorMixin]:
     mesh = get_mesh(mesh)
     shape = size(dims)
@@ -503,7 +552,8 @@ def dtype_of(dtype: Union[_tf_dtype_spec, Tensor]) -> Union[_none, _tf_dtype]:
         dtype = dtype.dtype
     if isinstance(dtype, str):
         dtype = getattr(tf.dtypes, dtype)
-    return dtype
+    if isinstance(dtype, (mesh_tensorflow.ops.VariableDType, _tf_dtype)):
+        return dtype
 
 
 def get_dtype(dtype: Union[_tf_dtype_spec, Tensor], preferred: Union[_tf_dtype_spec, Tensor]) -> _tf_dtype:
@@ -532,6 +582,13 @@ def _make_tensor(tensor: Union[mtf.Tensor, TensorMixin], *, requires_grad, dtype
         tensor.requires_grad = requires_grad
     return tensor
 
+def _make_tensor_subclass(cls, data: Union[mtf.Tensor, TensorMixin], require_grad: _bool = False) -> Union[mtf.Tensor, TensorMixin]:
+    # self, operation, shape, dtype, name = None, index = 0
+    tensor = TensorMixin.__new__(cls, data.operation, data.shape, data.dtype)
+    #TensorMixin.construct(tensor, data.operation, data.shape, data.dtype)
+    tensor.construct(data.operation, data.shape, data.dtype)
+    return _make_tensor(tensor, requires_grad=require_grad)
+
 
 def tensor(data, shape=None, *, dtype=None, requires_grad=False, mesh=None, name=None) -> Union[mtf.Tensor, TensorMixin]:
     mesh = get_mesh(mesh)
@@ -545,7 +602,7 @@ def tensor(data, shape=None, *, dtype=None, requires_grad=False, mesh=None, name
         # shape = size(shape)
         shape = shapelist(data, shape)
         result = mtf.constant(mesh, data, shape=shape)
-    dtype = get_dtype(dtype, data)
+    # dtype = get_dtype(dtype, data)
     return _make_tensor(result, requires_grad=requires_grad, dtype=dtype)
 
 
@@ -833,14 +890,14 @@ def promote_types(type1, type2):
     return type1
 
 
-def allclose(input: Union[mtf.Tensor, TensorMixin], other: Tensor, rtol: _float = 1e-05, atol: _float = 1e-08, equal_nan: _bool = False) -> _bool:
+def allclose(input: Union[mtf.Tensor, TensorMixin], other: Tensor, rtol: _float = 1e-05, atol: _float = 1e-08, equal_nan: _bool = False) -> Union[_bool, np.ndarray]:
     # TODO: This only works for "eager" execution.
     input = as_numpy(input)
     other = as_numpy(other)
     return np.allclose(input, other, rtol=rtol, atol=atol, equal_nan=equal_nan)
 
 
-def isclose(input: Union[mtf.Tensor, TensorMixin], other: Tensor, rtol: _float = 1e-05, atol: _float = 1e-08, equal_nan: _bool = False) -> Tensor:
+def isclose(input: Union[mtf.Tensor, TensorMixin], other: Tensor, rtol: _float = 1e-05, atol: _float = 1e-08, equal_nan: _bool = False) -> Union[_bool, np.ndarray]:
     # TODO: This only works for "eager" execution.
     input = as_numpy(input)
     other = as_numpy(other)
@@ -860,16 +917,21 @@ def convert_to_dimension(d) -> Union[_none, mtf.Dimension]:
       ValueError: If d cannot be converted to a Dimension.
     """
     if d is None:
-        return None
-    if isinstance(d, mtf.Dimension):
-        if not isinstance(d.name, str) or not (isinstance(d.size, int) or d.size is None):
-            raise ValueError("Bad dimension %s" % (d,))
         return d
-    name, size = d
-    if isinstance(name, str) and (isinstance(size, int) or size is None):
-        return mtf.Dimension(name, size)
+    if isinstance(d, mtf.Dimension):
+        # if not isinstance(d.name, str) or not (isinstance(d.size, int) or d.size is None):
+        #     raise ValueError("Bad dimension %s" % (d,))
+        # return d
+        name, size = d.name, d.size
     else:
-        raise ValueError("could not convert %s to Dimension" % (d,))
+        name, size = d
+    if isinstance(name, int):
+        name = str(name)
+    return mtf.Dimension(name, size)
+    # if isinstance(name, str) and (isinstance(size, int) or size is None):
+    #     return mtf.Dimension(name, size)
+    # else:
+    #     raise ValueError("could not convert %s to Dimension" % (d,))
 
 
 class TensorSizeFunctor(int):
@@ -929,6 +991,7 @@ class TensorMixin(MixinBase):
 
     view = view
     permute = permute
+    transpose = transpose
     select_dims = select_dims
     exclude_dims = exclude_dims
     unbind = unbind
@@ -1073,6 +1136,18 @@ class TensorMixin(MixinBase):
         TensorMixin.construct(self, *args, **kws)
         return self
 
+    @staticmethod
+    def _make_subclass(cls, data: Union[Tensor, TensorMixin], require_grad: _bool = False) -> Union[Tensor, TensorMixin]:
+        self = TensorMixin.__new__(cls, data.operation, data.shape, data.dtype)
+        return _make_tensor(self, requires_grad=require_grad, dtype=self.dtype)
+        # self: Union[Tensor, TensorMixin] = super().__new__(cls)
+        # TensorMixin.construct(self, *args, **kws)
+        # return self
+
+
+    # def _make_subclass(self, operation, shape, dtype, name = None, index = 0):
+    #     return self
+
 
 class OperationMixin(MixinBase):
     def __init__(self: Union[Operation, OperationMixin]):
@@ -1109,6 +1184,22 @@ class ShapeMixin:
     def to_string(self: Union[Shape, ShapeMixin]) -> str:
         return "Shape[%s]" % ", ".join(
             ["{}={}".format(d.name, d.size) for d in self.dims])
+
+
+class GraphMixin:
+    def reset(self: Union[mtf.Graph, GraphMixin]):
+        # self._operations = []
+        # self._trainable_variables = []
+        # self._all_variables = []
+        # # Maps a name used in the graph to the next id to use for that name.
+        # self._names_in_use = {}
+        # self.name_to_variable = {}
+        # self.captured_variable_scope = tf.get_variable_scope()
+        self._operations.clear()
+        self._trainable_variables.clear()
+        self._all_variables.clear()
+        self._names_in_use.clear()
+        self.name_to_variable.clear()
 
 
 class DTypeMixin:
@@ -1182,18 +1273,26 @@ for module in [mesh_tensorflow.ops]:
     module.Tensor = ensure_class_bases_begin_with(module, module.Tensor, TensorMixin)
     module.Operation = ensure_class_bases_begin_with(module, module.Operation, OperationMixin)
     module.Shape = ensure_class_bases_begin_with(module, module.Shape, ShapeMixin)
+    module.Graph = ensure_class_bases_begin_with(module, module.Graph, GraphMixin)
 
 mtf.Tensor = mesh_tensorflow.ops.Tensor
 mtf.Operation = mesh_tensorflow.ops.Operation
 mtf.Shape = mesh_tensorflow.ops.Shape
+mtf.Graph = mesh_tensorflow.ops.Graph
 
 globals()['Tensor'] = mtf.Tensor
 globals()['Operation'] = mtf.Operation
 globals()['Shape'] = mtf.Shape
+globals()['Graph'] = mtf.Graph
 
 TensorType = Union[mtf.Tensor, TensorMixin]
 OperationType = Union[mtf.Operation, OperationMixin]
 ShapeType = Union[mtf.Shape, ShapeMixin]
+GraphType = Union[mtf.Graph, GraphMixin]
+MeshType = Union[mtf.Mesh]
+MeshImplType = Union[mtf.MeshImpl]
+LoweringType = Union[mtf.Lowering]
+SessionType = Union[tf.Session]
 
 mesh_tensorflow.ops.convert_to_dimension = convert_to_dimension
 
@@ -1211,7 +1310,27 @@ for module in [_tf_dtypes]:
 assert tf.int32.is_signed
 
 
+# support torch.Tensor._make_subclass
+mesh_tensorflow.ops.Tensor._make_subclass = TensorMixin._make_subclass
+
 def reset(graph=None):
     if graph is None:
         graph = get_graph()
-    graph.operations.clear()
+    #graph.operations.clear()
+    graph.reset()
+
+
+State.GLOBAL = State()
+State.current = cv.ContextVar('mtftorch.State.current', default=State.GLOBAL)
+State.requires_grad = cv.ContextVar('mtftorch.State.requires_grad', default=False)
+
+
+def set_state(graph=None, mesh=None, mesh_impl=None, lowering=None, session=None):
+    new_state = State(graph=graph, mesh=mesh, mesh_impl=mesh_impl, lowering=lowering, session=session)
+    token = State.current.set(new_state)
+    def reset_state():
+        nonlocal token
+        if token is not None:
+            State.current.reset(token)
+            token = None
+    return reset_state

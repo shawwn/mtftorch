@@ -285,9 +285,11 @@ def debugTestRunner(post_mortem=None):
     return unittest.TextTestRunner(resultclass=DebugTestResult)
 
 def tensorflow_startup():
-    torch.tf.compat.v1.disable_v2_behavior()
-    torch.tf.compat.v1.enable_resource_variables()
-    torch.tf.get_logger().setLevel('DEBUG')
+    if not getattr(torch, 'tensorflow_startup__started', False):
+        torch.tensorflow_startup__started = True
+        torch.tf.compat.v1.disable_v2_behavior()
+        torch.tf.compat.v1.enable_resource_variables()
+        torch.tf.get_logger().setLevel('DEBUG')
 
 def run_tests(argv=UNITTEST_ARGS):
     tensorflow_startup()
