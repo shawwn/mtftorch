@@ -31,6 +31,7 @@ from mesh_tensorflow.ops import VariableDType as dtype
 from tensorflow.python.framework.dtypes import bool, uint8, int8, int16, int32, int64, bfloat16, float16, float32, float64, complex64, complex128, qint8, qint16, qint32, quint8
 
 from mtftorch.types import _none, _ellipsis, _int, _float, _bool, _dtype, _tf_dtype, _tf_dtype_spec, _device, _qscheme, _shape, _layout, Device, Number, Storage
+from mtftorch import return_types
 
 from mtftorch import _jit_internal
 
@@ -143,11 +144,11 @@ class Converter(ConverterBase): # (mesh_tensorflow.test_utils.NumpyConverter):
     def convert_tf_tensor_to_np_array(self, tensor: tf.Tensor) -> np.ndarray:
         assert is_tf_tensor(tensor)
         if tf.executing_eagerly():
-            return tensor.numpy()
+            return as_numpy(tensor.numpy())
         else:
             session = self.get_session()
             # session.run(tf.global_variables_initializer())
-            return tensor.eval(session=session)
+            return as_numpy(tensor.eval(session=session))
 
     def convert_mtf_tensor_to_tf_tensor(self, tensor: Union[mtf.Tensor, TensorMixin]):
         """Convert an mtf.Tensor to a tf.Tensor."""
@@ -293,6 +294,10 @@ def numpy(x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]) -> np.ndarra
     return get_converter().convert_to_np_array(x)
 
 
+def from_numpy(x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]) -> np.ndarray:
+    return tensor(x)
+
+
 def to_tf(x: Union[np.ndarray, tf.Tensor, mtf.Tensor, TensorMixin]) -> tf.Tensor:
     return get_converter().convert_to_tf_tensor(x)
 
@@ -318,6 +323,8 @@ def as_dims(x) -> List[mtf.Dimension]:
         return x.dims
     if isinstance(x, mtf.Dimension):
         return [x]
+    if isinstance(x, int):
+        return [mtf.Dimension(None, x)]
     if isinstance(x, dict):
         return as_dims(list(x.items()))
     if isinstance(x, str):
@@ -340,6 +347,8 @@ def as_dims(x) -> List[mtf.Dimension]:
             for v in x:
                 y.extend(as_dims(v))
             return y
+    if x is None:
+        return []
     raise ValueError(f"Can't convert {x!r} to dimensions")
 
 
@@ -433,13 +442,18 @@ def is_tensor(x) -> _bool:
     return isinstance(x, mtf.Tensor)
 
 
-def shapelist(x, *dims) -> Union[mtf.Shape, ShapeMixin]:
+def shapelist(x, *dims, selecting=True) -> Union[mtf.Shape, ShapeMixin]:
     if len(dims) == 1 and dims[0] is None:
         return size(x)
     old_dims = as_dims(x)
     if len(dims) <= 0:
         return size(old_dims)
-    dims = [old_dims[x] if isinstance(x, int) else x for x in dims]
+    if builtins.all([isinstance(x, int) for x in dims]):
+        if selecting:
+            dims = [old_dims[x] for x in dims]
+        else:
+            dims = [[None, x] for x in dims]
+    # dims = [old_dims[x] if isinstance(x, int) else x for x in dims]
     new_dims = as_dims(dims)
     if is_numpy(x) or is_tf_tensor(x):
         if len(old_dims) != len(new_dims):
@@ -494,7 +508,7 @@ def numel(tensor: Union[mtf.Tensor, TensorMixin]) -> _int:
 
 
 def view(x: Union[mtf.Tensor, TensorMixin], *dims) -> Union[mtf.Tensor, TensorMixin]:
-    new_shape = shapelist(x, *dims)
+    new_shape = shapelist(x, *dims, selecting=False)
     return mtf.reshape(x, new_shape)
 
 
@@ -716,6 +730,37 @@ def squeeze(tensor: Union[mtf.Tensor, TensorMixin], squeeze_dim) -> Union[mtf.Te
     return view(tensor, [dim for dim in list(tensor.shape) if dim.name not in squeeze_dims])
 
 
+def mtf_gather(tensor: mtf.Tensor, indices: mtf.Tensor, dims: List[mtf.Dimension]) -> mtf.Tensor:
+  dims = [tensor.shape.get_dim_by_name(dim.name) for dim in dims]
+  size = int(np.prod([dim.size for dim in dims]))
+  anon = mtf.Dimension("?", size)
+  tensor = mtf.replace_dimensions(tensor, dims, anon)
+  return mtf.gather(tensor, indices.long(), anon)
+
+
+def take(input: Union[mtf.Tensor, TensorMixin], index: Union[mtf.Tensor, TensorMixin]) -> Union[mtf.Tensor, TensorMixin]:
+    return mtf_gather(input, index, input.shape - index.shape)
+    # input_shape = input.size()
+    # output_shape = exclude_dims(input, index.shape.dimension_names)
+    # dims = as_dims(input_shape - output_shape)
+    # assert len(dims) == 1
+    # excluded_dim = input_shape - dims
+    # return gather2(input, index, dims)
+    # import pdb; pdb.set_race()
+    # return mtf.gather(input, index.long(), dims[0])#, output_shape=output_shape)
+    # #
+    # # shape = index.size()
+    # #
+    # # input = view(input, index.shape)
+    # # index = view(index, ['%index', -1])
+    # # index = index.long()
+    # # dim = size(input, 0)
+    # # #import pdb; pdb.set_trace()
+    # # result = mtf.gather(input, index, dim)
+    # # final = view(result, shape)
+    # # return final
+
+
 def rand(*dims, seed, dtype=None) -> Union[mtf.Tensor, TensorMixin]:
     dtype = get_dtype(dtype, tf.float32)
     shape = as_shape(dims)
@@ -793,20 +838,88 @@ def reduction(reduce_fn, tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepd
     return result
 
 
+def reduction2(reduce_fn, tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
+    input_shape = size(tensor)
+    if dim is None:
+        #dim = input_shape
+        tensor = tensor.view(-1)
+        dim = tensor.size(0)
+    else:
+        dim = size(input_shape, dim)
+        #dim = shapelist(input_shape, dim)
+    output_shape = exclude_dims(input_shape, dim)
+    result = reduce_fn(tensor, dim)
+    if keepdim:
+        result_shape = [(dim.name, dim.size if dim in output_shape else 1)
+                        for dim in input_shape]
+        result = view(result, result_shape)
+    return result
+
+
 def sum(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
     return reduction(mtf.reduce_sum, tensor, dim=dim, keepdim=keepdim)
 
 
 def mean(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
+    #import pdb; pdb.set_trace()
     return reduction(mtf.reduce_mean, tensor, dim=dim, keepdim=keepdim)
 
 
-def min(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
+@overload
+def min(tensor: Union[mtf.Tensor, TensorMixin]) -> return_types.Tensor: ...
+
+
+@overload
+def min(tensor: Union[mtf.Tensor, TensorMixin], dim: mtf.Dimension=None, keepdim: _bool=False) -> return_types.min: ...
+
+
+def min(tensor: Union[mtf.Tensor, TensorMixin], dim: mtf.Dimension=None, keepdim: _bool=False) -> Union[return_types.Tensor, return_types.min]:
+    if dim is None:
+        return reduction(mtf.reduce_min, tensor, dim=dim, keepdim=keepdim)
+    else:
+        indices = argmin(tensor, dim=dim, keepdim=keepdim)
+        values = take(tensor, indices)
+        return return_types.min(indices=indices, values=values)
+
+
+def minimum(input: Union[mtf.Tensor, TensorMixin], other: Union[mtf.Tensor, TensorMixin]) -> return_types.Tensor:
+    return mtf.where(input < other, input, other)
+
+
+def amin(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
     return reduction(mtf.reduce_min, tensor, dim=dim, keepdim=keepdim)
 
 
-def max(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
-    return reduction(mtf.reduce_max, tensor, dim=dim, keepdim=keepdim)
+def mm(input: Union[mtf.Tensor, TensorMixin], mat2: Union[mtf.Tensor, TensorMixin]) -> Union[mtf.Tensor, TensorMixin]:
+    lhs = input.view(input.size() - input.size(-1), "%mul=-1")
+    rhs = mat2.view("%mul=-1", mat2.size() - mat2.size(0))
+    return mtf.matmul(lhs, rhs)
+
+
+@overload
+def max(tensor: Union[mtf.Tensor, TensorMixin]) -> return_types.Tensor: ...
+
+
+@overload
+def max(tensor: Union[mtf.Tensor, TensorMixin], dim: mtf.Dimension=None, keepdim: _bool=False) -> return_types.max: ...
+
+
+def max(tensor: Union[mtf.Tensor, TensorMixin], dim: mtf.Dimension=None, keepdim: _bool=False) -> Union[return_types.Tensor, return_types.max]:
+    if dim is None:
+        return reduction(mtf.reduce_max, tensor, dim=dim, keepdim=keepdim)
+    else:
+        indices = argmax(tensor, dim=dim, keepdim=keepdim)
+        values = take(tensor, indices)
+        return return_types.max(indices=indices, values=values)
+
+
+def argmin(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
+    #raise NotImplementedError("TODO")
+    return reduction2(mtf.argmax, -tensor, dim=dim, keepdim=keepdim).long()
+
+
+def argmax(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
+    return reduction2(mtf.argmax, tensor, dim=dim, keepdim=keepdim).long()
 
 
 def any(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Union[mtf.Tensor, TensorMixin]:
@@ -998,12 +1111,18 @@ class TensorMixin(MixinBase):
     sum = sum
     mean = mean
     min = min
+    minimum = minimum
+    amin = amin
+    argmin = argmin
+    mm = mm
     max = max
+    argmax = argmax
     any = any
     all = all
     slice = slice
     split = split
     squeeze = squeeze
+    take = take
     index = index
 
     def bfloat16(self: Union[Tensor, TensorMixin]) -> Union[Tensor, TensorMixin]:
@@ -1178,7 +1297,23 @@ class OperationMixin(MixinBase):
                 [t for t in self.outputs if t.dtype.is_floating])
 
 
-class ShapeMixin:
+class ShapeMixin(MixinBase):
+    def __init__(self: Union[Shape, ShapeMixin]):
+        super().__init__()
+        #print(f"Shape {self}")
+
+    def __new__(cls, dims) -> Union[Shape, ShapeMixin]:
+        self: Union[Shape, ShapeMixin] = super().__new__(cls)
+        print(f"ShapeMixin.construct({dims})")
+        new_dims = []
+        dims = as_dims(dims)
+        for i, dim in enumerate(dims):
+            if dim.name is None:
+                dim = mtf.Dimension(str(i), dim.size)
+            new_dims.append(dim)
+        ShapeMixin.construct(self, new_dims)
+        return self
+
     # support None sizes
     @property
     def to_string(self: Union[Shape, ShapeMixin]) -> str:
@@ -1211,7 +1346,7 @@ class DTypeMixin:
     def is_floating_point(self: Union[_tf_dtype, DTypeMixin]) -> _bool:
         return self.is_floating
 
-    # ensure that str(mtorch.float32).split('.')[-1] == 'float32'
+    # ensure that str(mtftorch.float32).split('.')[-1] == 'float32'
     def __str__(self: Union[_tf_dtype, DTypeMixin]) -> str:
         return repr(self)
 
@@ -1299,7 +1434,7 @@ mesh_tensorflow.ops.convert_to_dimension = convert_to_dimension
 # we extend Shape.to_string to support None sizes
 setattr(mesh_tensorflow.ops.Shape, 'to_string', getattr(ShapeMixin, 'to_string'))
 
-# ensure that str(mtorch.float32).split('.')[-1] == 'float32'
+# ensure that str(mtftorch.float32).split('.')[-1] == 'float32'
 # float32.__class__.__str__ = float32.__class__.__repr__
 # float32.__class__.is_floating_point = float32.__class__.is_floating
 
