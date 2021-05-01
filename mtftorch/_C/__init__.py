@@ -985,7 +985,7 @@ class TensorMixin(MixinBase):
     @property
     def to_string(self: Union[Tensor, TensorMixin]) -> str:
         try:
-            return "Tensor[%s, %s, %s, %s]" % (self.name, self.shape.to_string, self.dtype, self.numpy())
+            return "Tensor[\nname=\t%s,\ndtype=\t%s,\nshape=\t%s\nvalue=\n%s\n]" % (self.name, self.dtype, self.shape.to_string, self.numpy())
         except:
             return "Tensor[%s, %s, %s]" % (self.name, self.shape.to_string, self.dtype)
 
