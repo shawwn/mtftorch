@@ -37,6 +37,8 @@ from mtftorch import _jit_internal
 
 tf = tf2.compat.v1
 
+logger = tf.get_logger()
+
 newaxis = tf.newaxis
 
 mtftorch.Tensor = Tensor
@@ -1248,7 +1250,7 @@ class TensorMixin(MixinBase):
         super().__init__()
         self._requires_grad = None
         self.grad = None
-        print(f"Tensor {self.shape}")
+        logger.debug(f"Tensor {self.shape}")
 
     def __new__(cls, *args, **kws) -> Union[Tensor, TensorMixin]:
         self: Union[Tensor, TensorMixin] = super().__new__(cls)
@@ -1272,7 +1274,7 @@ class OperationMixin(MixinBase):
     def __init__(self: Union[Operation, OperationMixin]):
         super().__init__()
         self._requires_grad = is_grad_enabled()
-        print(f"Operation {self.graph.operations.index(self)} {type(self)} requires_grad={self.requires_grad}")
+        logger.debug(f"Operation {self.graph.operations.index(self)} {type(self)} requires_grad={self.requires_grad}")
 
     def __new__(cls, *args, **kws) -> Union[Operation, OperationMixin]:
         self: Union[Operation, OperationMixin] = super().__new__(cls)
@@ -1300,11 +1302,11 @@ class OperationMixin(MixinBase):
 class ShapeMixin(MixinBase):
     def __init__(self: Union[Shape, ShapeMixin]):
         super().__init__()
-        #print(f"Shape {self}")
+        #logger.debug(f"Shape {self}")
 
     def __new__(cls, dims) -> Union[Shape, ShapeMixin]:
         self: Union[Shape, ShapeMixin] = super().__new__(cls)
-        print(f"ShapeMixin.construct({dims})")
+        logger.debug(f"ShapeMixin.construct({dims})")
         new_dims = []
         dims = as_dims(dims)
         for i, dim in enumerate(dims):
