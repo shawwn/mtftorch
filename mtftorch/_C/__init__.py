@@ -988,9 +988,11 @@ def all(tensor: Union[mtf.Tensor, TensorMixin], dim=None, keepdim=False) -> Unio
     return reduction(mtf.reduce_all, tensor, dim=dim, keepdim=keepdim)
 
 
-def cwise(tensor: Union[mtf.Tensor, TensorMixin], tf_fn, output_dtype=None, grad_function=None) -> Union[mtf.Operation, OperationMixin]:
-    return mtf.cwise(tf_fn, [tensor], output_dtype=output_dtype, grad_function=grad_function)
+def cwise(tensor: Union[mtf.Tensor, TensorMixin], tf_fn, *xs, output_dtype=None, grad_function=None) -> Union[mtf.Operation, OperationMixin]:
+    return mtf.cwise(tf_fn, [tensor] + list(xs), output_dtype=output_dtype, grad_function=grad_function)
 
+def slicewise(tensor: Union[mtf.Tensor, TensorMixin], tf_fn, *xs, output_shape=None, output_dtype=None, splittable_dims=None, grad_function=None) -> Union[mtf.Operation, OperationMixin]:
+    return mtf.slicewise(tf_fn, [tensor] + list(xs), output_shape=output_shape, output_dtype=output_dtype, splittable_dims=splittable_dims, grad_function=grad_function)
 
 def binary_op(x1: Union[mtf.Tensor, TensorMixin], x2: Union[mtf.Tensor, TensorMixin], tf_fn, output_shape=None) -> Union[mtf.Operation, OperationMixin]:
     output_dtype = x1.dtype if isinstance(x1, Tensor) else x2.dtype
