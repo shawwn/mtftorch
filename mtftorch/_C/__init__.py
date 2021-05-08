@@ -88,6 +88,28 @@ class Generator(object):
 
 default_generator = Generator()
 
+
+# Defined in torch/csrc/Layout.cpp
+class layout:
+    ...
+
+# # Defined in torch/csrc/utils/disable_torch_function.cpp
+# def DisableTorchFunction(): ...
+
+# Defined in torch/csrc/utils/tensor_layouts.cpp
+strided : layout = layout()
+sparse_coo : layout = layout()
+_mkldnn : layout = layout()
+
+# Defined in torch/csrc/MemoryFormat.cpp
+class memory_format: ...
+
+# Defined in torch/csrc/utils/tensor_memoryformats.cpp
+contiguous_format: memory_format = memory_format()
+channels_last: memory_format = memory_format()
+channels_last_3d: memory_format = memory_format()
+preserve_format: memory_format = memory_format()
+
 _api_usage_seen = set()
 
 
@@ -622,6 +644,20 @@ def tensor(data, shape=None, *, dtype=None, requires_grad=False, mesh=None, name
         result = mtf.constant(mesh, data, shape=shape)
     # dtype = get_dtype(dtype, data)
     return _make_tensor(result, requires_grad=requires_grad, dtype=dtype)
+
+
+def empty(*size, out=None, dtype=None, layout=strided, device=None, requires_grad=False, pin_memory=False, memory_format=contiguous_format) -> Union[mtf.Tensor, TensorMixin]:
+    if out is not None:
+        raise NotImplementedError()
+    if layout != strided:
+        raise NotImplementedError()
+    if device is not None:
+        raise NotImplementedError()
+    if pin_memory is not False:
+        raise NotImplementedError()
+    if memory_format != contiguous_format:
+        raise NotImplementedError()
+    return zeros(*size, dtype=dtype, requires_grad=requires_grad)
 
 
 def cat(tensors: Sequence[Union[mtf.Tensor, TensorMixin]], dim=0) -> Union[mtf.Tensor, TensorMixin]:
