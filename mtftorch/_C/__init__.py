@@ -900,6 +900,19 @@ def mm(input: Union[mtf.Tensor, TensorMixin], mat2: Union[mtf.Tensor, TensorMixi
     return mtf.matmul(lhs, rhs)
 
 
+def matmul(input: Union[mtf.Tensor, TensorMixin], mat2: Union[mtf.Tensor, TensorMixin]) -> Union[mtf.Tensor, TensorMixin]:
+    return mtf.matmul(input, mat2)
+
+
+def t(input: Union[mtf.Tensor, TensorMixin]) -> Union[mtf.Tensor, TensorMixin]:
+    rank = input.dim()
+    if rank < 2:
+        return input
+    if rank > 2:
+        raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {rank}D")
+    return transpose(input, 0, 1)
+
+
 @overload
 def max(tensor: Union[mtf.Tensor, TensorMixin]) -> return_types.Tensor: ...
 
@@ -1119,6 +1132,7 @@ class TensorMixin(MixinBase):
     amin = amin
     argmin = argmin
     mm = mm
+    matmul = matmul
     max = max
     argmax = argmax
     any = any
@@ -1128,6 +1142,7 @@ class TensorMixin(MixinBase):
     squeeze = squeeze
     take = take
     index = index
+    t = t
 
     def bfloat16(self: Union[Tensor, TensorMixin]) -> Union[Tensor, TensorMixin]:
         return self.to(bfloat16)
