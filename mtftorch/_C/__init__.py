@@ -21,6 +21,7 @@ import mesh_tensorflow as mtf
 import mesh_tensorflow.ops
 import tensorflow as tf2
 from tensorflow.python.framework import dtypes as _tf_dtypes
+from tensorflow.python.framework import tensor_util as _tf_tensor_util
 
 import mesh_tensorflow.ops
 from mesh_tensorflow.ops import Tensor
@@ -437,7 +438,8 @@ def is_numpy(x) -> _bool:
 
 
 def is_tf_tensor(x) -> _bool:
-    return isinstance(x, tf.Tensor)
+    # return isinstance(x, tf.Tensor)
+    return _tf_tensor_util.is_tensor(x)
 
 
 def is_tensor(x) -> _bool:
