@@ -58,13 +58,14 @@ class TestModule(TestCase):
 
     @compare
     def test_tensor(self, torch, tensor):
-        return tensor([[4, 3, 5], [6, 7, 8]])
+        tensor([[4, 3, 5], [6, 7, 8]]).ok()
 
     @compare
     def test_take(self, torch, tensor):
         src = tensor([[4, 3, 5],
                       [6, 7, 8]])
-        return torch.take(src, tensor([0, 2, 5]))
+        torch.take(src, tensor([0, 2, 5])).ok()
+        src.take(tensor([0, 2, 5])).ok()
 
     @compare
     def test_argmax(self, torch, tensor):
@@ -73,7 +74,10 @@ class TestModule(TestCase):
                     [-0.7401, -0.8805, -0.3402, -1.1936],
                     [ 0.4907, -1.3948, -1.0691, -0.3132],
                     [-1.6092,  0.5419, -0.2993,  0.3195]])
-        return a, torch.argmax(a), torch.argmax(a, dim=1)
+        torch.argmax(a).ok()
+        torch.argmax(a, dim=1).ok()
+        a.argmax().ok()
+        a.argmax(dim=1).ok()
 
     @compare
     def test_mean(self, torch, tensor):
