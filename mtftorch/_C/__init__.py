@@ -180,11 +180,14 @@ class Converter(ConverterBase): # (mesh_tensorflow.test_utils.NumpyConverter):
         assert is_tensor(tensor)
         # if is_tf_tensor(tensor):
         #     return tensor
-        try:
-            return self.lowering.export_to_tf_tensor(tensor)
-        except KeyError:
-            state = get_state()
-            state.reset_lowering()
+        if False:
+            try:
+                return self.lowering.export_to_tf_tensor(tensor)
+            except KeyError:
+                state = get_state()
+                state.reset_lowering()
+                return self.lowering.export_to_tf_tensor(tensor)
+        else:
             return self.lowering.export_to_tf_tensor(tensor)
 
     @property
@@ -224,7 +227,7 @@ class State:
             mesh_impl = mtf.placement_mesh_impl.PlacementMeshImpl(
                 shape=[], layout={}, devices=[""])
         if lowering is None:
-            lowering = mtf.Lowering(graph, {mesh: mesh_impl}, autostack=False)
+            lowering = mtf.Lowering(graph, {mesh: mesh_impl}, autostack=False, lazy=True)
         self.graph = graph
         self.mesh = mesh
         self.mesh_impl = mesh_impl
@@ -232,7 +235,9 @@ class State:
         self.converter = Converter(session=session)
 
     def reset_lowering(self):
-        self.lowering = mtf.Lowering(self.graph, {self.mesh: self.mesh_impl}, autostack=False)
+        self.lowering = mtf.Lowering(self.graph, {self.mesh: self.mesh_impl}, autostack=False, lazy=True)
+        for op in self.graph.operations:
+            self.lowering.lower_op(op)
 
 
 def get_state() -> State:
@@ -1110,10 +1115,7 @@ class MixinBase:
         self.__init__called = getattr(self, '__init__called', 0)
         self.__init__called += 1
 
-    @classmethod
-    def construct(cls, self, *args, **kws):
-        self.__class__.__init__(self, *args, **kws)
-        cls.__init__(self)
+    def __hook_init__(self):
         assert self.__init__called == 1
         __init__ = self.__class__.__init__
 
@@ -1122,6 +1124,13 @@ class MixinBase:
             self.__class__.__init__ = __init__
 
         self.__class__.__init__ = hook__init__
+        return self
+
+    @classmethod
+    def construct(cls, self, *args, **kws):
+        self.__class__.__init__(self, *args, **kws)
+        cls.__init__(self)
+        self.__hook_init__()
 
 
 class TensorMixin(MixinBase):
@@ -1337,6 +1346,8 @@ class OperationMixin(MixinBase):
     def __new__(cls, *args, **kws) -> Union[Operation, OperationMixin]:
         self: Union[Operation, OperationMixin] = super().__new__(cls)
         OperationMixin.construct(self, *args, **kws)
+        lowering = get_lowering()
+        lowering.lower_op(self)
         return self
 
     @property
@@ -1411,6 +1422,63 @@ class DTypeMixin:
         return repr(self)
 
 
+# we override Lowering's constructor.
+delattr(mtf.Lowering, "__init__")
+
+
+class LoweringMixin(MixinBase):
+    def __new__(cls, *args, **kws) -> Union[Lowering, LoweringMixin]:
+        self: Union[Tensor, LoweringMixin] = super().__new__(cls)
+        self.__class__.__init__(self, *args, **kws)
+        return MixinBase.__hook_init__(self)
+
+    def __init__(self: Union[Lowering, LoweringMixin], graph, mesh_to_impl, autostack=True, log_file=None, lazy=False):
+        """Creates a Lowering of a Graph.
+
+        Args:
+          graph: Graph.
+          mesh_to_impl: {Mesh: MeshImpl}. Keys are the Mesh's in the graph and
+            their values are MeshImpl's, which map Tensor Dimension names to
+            Mesh Dimension names.
+          autostack: a boolean.  If True, then the graph gets rewritten to
+            reduce the number of variables (see rewrite_stack_variables()).
+            This is a helpful performance optimization for large meshes.
+            For more fine-grained control, you can call
+            graph.rewrite_stack_variables() yourself before creating the Lowering.
+          log_file: an optional string. If provided, information about the variables
+            and operations will also be logged to this file.
+          lazy: a boolean.  If true, then don't lower any graph operations.
+        """
+        super().__init__()
+        # tf.logging.info("LOWERING GRAPH:\n%s" % graph.to_string)
+        self.mesh_to_impl = mesh_to_impl   # {Mesh: MeshImpl}
+        self.graph = graph
+        if autostack:
+            self.autostack()
+        self._counters = []
+        self.tensors = {}                  # {Tensor: Mesh.LaidOutTensor}
+        self.operations = {}               # {Operation: tf.Operation}
+        self.variables = {}                # {Variable: LaidOutVariable}
+        self.lowered = []
+        if not lazy:
+            for op in graph.operations:
+                self.lower_op(op)
+
+    def lower_op(self: Union[Tensor, LoweringMixin], op: Union[Operation, OperationMixin]):
+        if op in self.lowered:
+            tf.logging.warn("Already lowered operation %s" % op.to_string)
+            return
+        self.lowered.append(op)
+        tf.logging.debug("Lowering operation %s" % op.to_string)
+        #tf.logging.warn("Lowering operation %s" % type(op).__name__)
+        with tf.name_scope(op.name):
+            op.lower(self)
+        for out in op.outputs:
+            self.add_counter(
+                "output/%s" % type(op).__name__, self.laid_out_size(out))
+            self.add_counter("output_unique/%s" % type(op).__name__, out.size)
+
+
 # https://qastack.vn/programming/9539052/how-to-dynamically-change-base-class-of-instances-at-runtime
 
 def ensure_class_bases_begin_with(namespace: ModuleType, class_name, base_class):
@@ -1480,11 +1548,13 @@ for module in [mesh_tensorflow.ops]:
     module.Operation = ensure_class_bases_begin_with(module, module.Operation, OperationMixin)
     module.Shape = ensure_class_bases_begin_with(module, module.Shape, ShapeMixin)
     module.Graph = ensure_class_bases_begin_with(module, module.Graph, GraphMixin)
+    module.Lowering = ensure_class_bases_begin_with(module, module.Lowering, LoweringMixin)
 
 mtf.Tensor = mesh_tensorflow.ops.Tensor
 mtf.Operation = mesh_tensorflow.ops.Operation
 mtf.Shape = mesh_tensorflow.ops.Shape
 mtf.Graph = mesh_tensorflow.ops.Graph
+mtf.Lowering = mesh_tensorflow.ops.Lowering
 
 globals()['Tensor'] = mtf.Tensor
 globals()['Operation'] = mtf.Operation
@@ -1497,7 +1567,7 @@ ShapeType = Union[mtf.Shape, ShapeMixin]
 GraphType = Union[mtf.Graph, GraphMixin]
 MeshType = Union[mtf.Mesh]
 MeshImplType = Union[mtf.MeshImpl]
-LoweringType = Union[mtf.Lowering]
+LoweringType = Union[mtf.Lowering, LoweringMixin]
 SessionType = Union[tf.Session]
 
 mesh_tensorflow.ops.convert_to_dimension = convert_to_dimension
