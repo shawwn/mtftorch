@@ -26,7 +26,8 @@ def startup():
         globals()['tensorflow_startup__started'] = True
         tf.disable_v2_behavior()
         tf.enable_resource_variables()
-        tf2.get_logger().setLevel('DEBUG')
+        # tf2.get_logger().setLevel('DEBUG')
+        tf2.get_logger().setLevel('WARN')
 
 startup()
 

@@ -17,19 +17,35 @@ def compare_return_values(self, x, y, func, *args, **kws):
             compare_return_values(self, x.indices, y.indices, func, *args, **kws)
         if hasattr(x, 'values'):
             compare_return_values(self, x.values, y.values, func, *args, **kws)
-    elif isinstance(x, tuple) and isinstance(y, tuple):
+    elif isinstance(x, (list, tuple)) and isinstance(y, (list, tuple)):
         for i, (A, B) in enumerate(zip(x, y)):
             compare_return_values(self, A, B, func, *args, **kws)
     else:
         self.assertEqual(x, y, rtol=1e-3, atol=1e-3)
 
 
+def make_verifier(output):
+    assert isinstance(output, list)
+    def verifier(other):
+        if other not in set(output):
+            output.append(other)
+        return other
+    # pytorch.Tensor.ok = verifier
+    # torch.TensorMixin.ok = verifier
+    return verifier
+
+
 def compare(f):
     @functools.wraps(f)
     def wrap(self, *args, **kws):
-        A = f(self, pytorch, *args, **kws, tensor=pytorch.tensor)
-        B = f(self, torch, *args, **kws, tensor=torch.tensor)
+        A = []
+        B = []
+        pytorch.Tensor.ok = make_verifier(A)
+        torch.TensorMixin.ok = make_verifier(B)
+        A1 = f(self, pytorch, *args, **kws, tensor=pytorch.tensor)
+        B1 = f(self, torch, *args, **kws, tensor=torch.tensor)
         compare_return_values(self, A, B, f, *args, **kws)
+        compare_return_values(self, A1, B1, f, *args, **kws)
     return wrap
 
 class TestModule(TestCase):
@@ -38,7 +54,7 @@ class TestModule(TestCase):
 
     @compare
     def test_arange(self, torch, tensor):
-        return torch.arange(4).view(2, 2)
+        torch.arange(4).ok().view(2, 2).ok()
 
     @compare
     def test_tensor(self, torch, tensor):
