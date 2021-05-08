@@ -1427,6 +1427,17 @@ delattr(mesh_tensorflow.ops.Operation, 'has_gradient')
 # we print tensor values to the repl
 delattr(mesh_tensorflow.ops.Tensor, 'to_string')
 
+# let a Dimension be interpreted as an integer
+mesh_tensorflow.ops.Dimension.__int__ = lambda self: self.size
+mesh_tensorflow.ops.Dimension.__add__ = lambda self, a: int(self) + a
+mesh_tensorflow.ops.Dimension.__sub__ = lambda self, a: int(self) - a
+mesh_tensorflow.ops.Dimension.__mul__ = lambda self, a: int(self) * a
+mesh_tensorflow.ops.Dimension.__floordiv__ = lambda self, a: int(self) // a
+mesh_tensorflow.ops.Dimension.__radd__ = lambda self, a: int(self) + a
+mesh_tensorflow.ops.Dimension.__rsub__ = lambda self, a: int(self) - a
+mesh_tensorflow.ops.Dimension.__rmul__ = lambda self, a: int(self) * a
+mesh_tensorflow.ops.Dimension.__rfloordiv__ = lambda self, a: int(self) // a
+
 for module in [mesh_tensorflow.ops]:
     module: ModuleType
     module.Tensor = ensure_class_bases_begin_with(module, module.Tensor, TensorMixin)
