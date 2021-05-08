@@ -1170,6 +1170,11 @@ class TensorMixin(MixinBase):
     def is_quantized(self: Union[Tensor, TensorMixin]) -> _bool:
         return False
 
+    def detach(self):
+        t: Union[Tensor, TensorMixin] = mtf.identity(self, self.operation.name)
+        t.requires_grad = False
+        return t
+
     @property
     def device(self: Union[Tensor, TensorMixin]) -> Device:
         return None
