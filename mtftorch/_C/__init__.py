@@ -1598,7 +1598,7 @@ def reset(graph=None):
 
 State.GLOBAL = State()
 State.current = cv.ContextVar('mtftorch.State.current', default=State.GLOBAL)
-State.requires_grad = cv.ContextVar('mtftorch.State.requires_grad', default=False)
+State.requires_grad = cv.ContextVar('mtftorch.State.requires_grad', default=True)
 
 
 def set_state(graph=None, mesh=None, mesh_impl=None, lowering=None, session=None):
