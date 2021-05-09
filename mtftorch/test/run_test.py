@@ -33,6 +33,7 @@ TESTS = [
     'test_basic',
     'test_module',
     'test_ops',
+    'test_torch_api',
     # 'test_public_bindings',
     # 'test_type_hints',
     # 'test_autograd',
